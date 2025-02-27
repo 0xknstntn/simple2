@@ -2,9 +2,7 @@ import transformers
 import torch.nn.functional as F
 from datasets import load_dataset
 from safetensors.torch import save_model
-from model import Simple1Model
 from config import ModelConfig, TrainingConfig
-from utils import preprocess_data, SafeSaveCallback
 from huggingface_hub import login
 from dotenv import load_dotenv
 import os
@@ -22,14 +20,22 @@ def train():
 	model = transformers.AutoModelForCausalLM.from_pretrained(model_cfg.model_name)
 	dataset = load_dataset(train_cfg.dataset_name)
 
-	if isinstance(dataset, dict):
-		dataset = dataset['train']
-
 	tokenizer = transformers.AutoTokenizer.from_pretrained(model_cfg.model_name, use_fast=True)
 
 	instruction_template = "<|im_start|>user"
 	response_template = "<|im_start|>assistant\n"
 	tokenizer.pad_token = "<|fim_pad|>"
+
+	def tokenize_function(examples):
+		return tokenizer(
+			examples['text'], 
+			padding='max_length',
+			truncation=True,
+			max_length=2048
+		)
+
+	dataset = dataset.map(tokenize_function, batched=True)
+	dataset.set_format(type='torch', columns=['input_ids', 'attention_mask'])
 
 	collator = trl.DataCollatorForCompletionOnlyLM(
 		instruction_template=instruction_template,
@@ -50,7 +56,6 @@ def train():
 		remove_unused_columns=False,
 		save_strategy="no",
 		save_only_model=True,
-		dataset_text_field="text"
 	)
 
 	trainer = trl.SFTTrainer(
